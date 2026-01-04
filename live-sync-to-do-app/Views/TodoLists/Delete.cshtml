@@ -1,0 +1,48 @@
+﻿@model live_sync_to_do_app.Models.TodoList
+
+@{
+    ViewData["Title"] = "Delete List";
+}
+
+<div class="modern-page-container">
+    <div class="content-card">
+        <div class="page-header">
+            <h1 class="page-title text-danger">Delete Todo List</h1>
+            <a asp-action="Index" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Lists
+            </a>
+        </div>
+
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            <strong>Warning:</strong> Are you sure you want to delete this list? This action cannot be undone and all tasks in this list will be permanently deleted.
+        </div>
+
+        <div class="delete-details">
+            <h3>List Details</h3>
+            <dl class="row">
+                <dt class="col-sm-3">List Name</dt>
+                <dd class="col-sm-9">@Html.DisplayFor(model => model.Name)</dd>
+
+                <dt class="col-sm-3">Owner</dt>
+                <dd class="col-sm-9">@Html.DisplayFor(model => model.OwnerEmail)</dd>
+
+                @if (!string.IsNullOrEmpty(Model.SharedWith))
+                {
+                    <dt class="col-sm-3">Shared With</dt>
+                    <dd class="col-sm-9">@Html.DisplayFor(model => model.SharedWith)</dd>
+                }
+            </dl>
+        </div>
+        
+        <form asp-action="Delete" class="delete-form">
+            <input type="hidden" asp-for="Id" />
+            <div class="form-actions">
+                <button type="submit" class="btn btn-danger btn-lg">
+                    <i class="bi bi-trash"></i> Delete List
+                </button>
+                <a asp-action="Index" class="btn btn-outline-secondary btn-lg">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>

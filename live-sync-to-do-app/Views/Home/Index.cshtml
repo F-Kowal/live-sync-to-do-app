@@ -2,7 +2,66 @@
     ViewData["Title"] = "Home Page";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="modern-page-container">
+    <div class="welcome-hero">
+        <div class="welcome-content">
+            <h1 class="display-4 welcome-title">Welcome to Live Lists</h1>
+            <p class="welcome-subtitle">Organize your tasks, collaborate with others, and get things done together in real-time.</p>
+            
+            @if (User.Identity.IsAuthenticated)
+            {
+                <div class="welcome-actions">
+                    <a asp-controller="TodoLists" asp-action="Index" class="btn btn-primary btn-lg welcome-btn">
+                        <i class="bi bi-list-check"></i> Go to My Lists
+                    </a>
+                </div>
+            }
+            else
+            {
+                <div class="welcome-actions">
+                    <a asp-area="Identity" asp-page="/Account/Register" class="btn btn-primary btn-lg welcome-btn">
+                        <i class="bi bi-person-plus"></i> Get Started
+                    </a>
+                    <a asp-area="Identity" asp-page="/Account/Login" class="btn btn-outline-primary btn-lg welcome-btn">
+                        <i class="bi bi-box-arrow-in-right"></i> Sign In
+                    </a>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="features-section">
+        <div class="container">
+            <h2 class="section-title text-center mb-5">Features</h2>
+            <div class="row g-4">
+                <div class="col-md-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="bi bi-lightning-charge"></i>
+                        </div>
+                        <h3>Real-Time Sync</h3>
+                        <p>See changes instantly as you and your team collaborate on shared lists.</p>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="bi bi-people"></i>
+                        </div>
+                        <h3>Share & Collaborate</h3>
+                        <p>Share your todo lists with others and work together seamlessly.</p>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="bi bi-check2-square"></i>
+                        </div>
+                        <h3>Stay Organized</h3>
+                        <p>Keep track of all your tasks in one place with an intuitive interface.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>

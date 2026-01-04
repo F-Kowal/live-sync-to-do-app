@@ -1,0 +1,113 @@
+﻿@model live_sync_to_do_app.Models.TodoList
+
+@{
+    ViewData["Title"] = Model.Name;
+}
+
+@* @{
+    ViewData["Title"] = "Details";
+} *@
+
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>@Model.Name</h1>
+        <a asp-action="Index" class="btn btn-secondary">Powrót</a>
+    </div>
+
+    <div class="card mb-4 shadow-sm">
+        <div class="card-body">
+            <div class="input-group">
+                <input type="text" id="taskInput" class="form-control" placeholder="Wpisz nowe zadanie...">
+                <button class="btn btn-primary" onclick="addTask()">Dodaj zadanie</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="row" id="tasksContainer">
+        @foreach (var task in Model.Tasks)
+        {
+            <div class="col-md-4 mb-3" id="task-@task.Id">
+                <div class="card @(task.IsCompleted ? "bg-light" : "bg-warning") shadow-sm">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" 
+                                   @(task.IsCompleted ? "checked" : "") 
+                                   onclick="toggleTask(@task.Id)">
+                            <label class="form-check-label @(task.IsCompleted ? "text-decoration-line-through" : "")">
+                                @task.Title
+                            </label>
+                        </div>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(@task.Id)">×</button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.min.js"></script>
+    <script>
+        const listId = "@Model.Id";
+
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/todoHub")
+            .build();
+
+        connection.start().then(() => {
+            connection.invoke("JoinListGroup", parseInt(listId));
+        }).catch(err => console.error(err.toString()));
+
+        connection.on("ReceiveTaskAdded", (taskId, title) => {
+            const container = document.getElementById("tasksContainer");
+            const html = `
+                <div class="col-md-4 mb-3" id="task-${taskId}">
+                    <div class="card bg-warning shadow-sm">
+                        <div class="card-body d-flex justify-content-between align-items-center">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" onclick="toggleTask(${taskId})">
+                                <label class="form-check-label">${title}</label>
+                            </div>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${taskId})">×</button>
+                        </div>
+                    </div>
+                </div>`;
+            container.insertAdjacentHTML('beforeend', html);
+        });
+
+        connection.on("ReceiveTaskToggled", (taskId, isCompleted) => {
+            const taskDiv = document.querySelector(`#task-${taskId} .card`);
+            const checkbox = document.querySelector(`#task-${taskId} input`);
+            const label = document.querySelector(`#task-${taskId} label`);
+
+            if (isCompleted) {
+                taskDiv.classList.replace("bg-warning", "bg-light");
+                label.classList.add("text-decoration-line-through");
+                checkbox.checked = true;
+            } else {
+                taskDiv.classList.replace("bg-light", "bg-warning");
+                label.classList.remove("text-decoration-line-through");
+                checkbox.checked = false;
+            }
+        });
+
+        async function addTask() {
+            const input = document.getElementById("taskInput");
+            const title = input.value;
+            if (!title) return;
+
+            const response = await fetch(`/TodoLists/AddTask?listId=${listId}&title=${title}`, { method: 'POST' });
+            const data = await response.json();
+
+            await connection.invoke("SendTaskAdded", parseInt(listId), data.id, data.title);
+            input.value = "";
+        }
+
+        async function toggleTask(taskId) {
+            await fetch(`/TodoLists/ToggleTask?taskId=${taskId}`, { method: 'POST' });
+            const checkbox = document.querySelector(`#task-${taskId} input`);
+
+            await connection.invoke("SendTaskToggled", parseInt(listId), taskId, checkbox.checked);
+        }
+    </script>
+}

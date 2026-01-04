@@ -1,0 +1,46 @@
+﻿@model live_sync_to_do_app.Models.TodoList
+
+@{
+    ViewData["Title"] = "Create New List";
+}
+
+<div class="modern-page-container">
+    <div class="content-card">
+        <div class="page-header">
+            <h1 class="page-title">Create New Todo List</h1>
+            <a asp-action="Index" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Lists
+            </a>
+        </div>
+
+        <div class="form-container">
+            <form asp-action="Create" class="modern-form">
+                <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
+                
+                <div class="form-group-modern">
+                    <label asp-for="Name" class="form-label-modern">List Name</label>
+                    <input asp-for="Name" class="form-control-modern" placeholder="Enter list name..." />
+                    <span asp-validation-for="Name" class="text-danger"></span>
+                </div>
+                
+                <div class="form-group-modern">
+                    <label asp-for="SharedWith" class="form-label-modern">Share With (Optional)</label>
+                    <input asp-for="SharedWith" class="form-control-modern" placeholder="email1@example.com, email2@example.com" />
+                    <small class="form-text text-muted">Enter comma-separated email addresses to share this list</small>
+                    <span asp-validation-for="SharedWith" class="text-danger"></span>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="bi bi-check-lg"></i> Create List
+                    </button>
+                    <a asp-action="Index" class="btn btn-outline-secondary btn-lg">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    @{await Html.RenderPartialAsync("_ValidationScriptsPartial");}
+}
