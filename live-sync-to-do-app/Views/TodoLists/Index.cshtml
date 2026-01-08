@@ -28,10 +28,11 @@
                          data-list-id="@list.Id"
                          data-list-name="@list.Name"
                          data-list-shared="@(list.SharedWith ?? "")"
+                         data-list-count="@(list.Tasks?.Count ?? 0)"
                          onclick="loadList(@list.Id)">
                         <div class="todo-list-item-name">@list.Name</div>
                         <div class="todo-list-item-meta">
-                            <span>@(list.Tasks?.Count ?? 0) tasks</span>
+                            <span class="task-count">@(list.Tasks?.Count ?? 0) tasks</span>
                             @if (list.OwnerEmail != User.Identity.Name)
                             {
                                 <span class="badge bg-info">Shared</span>
@@ -99,6 +100,10 @@
                             <label for="taskDueDate" class="form-label-modern">Due Date</label>
                             <input type="date" id="taskDueDate" class="form-control-modern">
                         </div>
+                        <div class="form-group-modern">
+                            <label for="taskAssignedTo" class="form-label-modern">Assign to (comma-separated emails)</label>
+                            <input type="text" id="taskAssignedTo" class="form-control-modern" placeholder="email1@example.com, email2@example.com">
+                        </div>
                     </div>
                 </div>
 
@@ -110,16 +115,16 @@
                             <input type="email" id="shareEmailInput" class="form-control" placeholder="Enter email address...">
                             <button class="btn btn-share" onclick="shareList(@firstList.Id)">Share</button>
                         </div>
-                        @if (!string.IsNullOrEmpty(firstList.SharedWith))
-                        {
-                            <div class="shared-users">
+                        <div class="shared-users">
+                            @if (!string.IsNullOrEmpty(firstList.SharedWith))
+                            {
                                 <strong>Shared with:</strong>
                                 @foreach (var email in firstList.SharedWith.Split(',', StringSplitOptions.RemoveEmptyEntries))
                                 {
                                     <span class="shared-user-badge">@email</span>
                                 }
-                            </div>
-                        }
+                            }
+                        </div>
                     </div>
                 }
 
@@ -143,16 +148,31 @@
                                         {
                                             <div class="task-due-date">
                                                 <i class="bi bi-calendar"></i>
-                                                <span>Due: @task.DueDate.Value.ToString("MMM dd, yyyy")</span>
+                                                <span>Due: @task.DueDate.Value.ToString("dd-MM-yyyy")</span>
                                                 @if (task.DueDate.Value < DateTime.Now && !task.IsCompleted)
                                                 {
                                                     <span class="badge bg-danger">Overdue</span>
                                                 }
                                             </div>
                                         }
+                                        @if (!string.IsNullOrEmpty(task.AssignedTo))
+                                        {
+                                            <div class="task-assigned-to">
+                                                <i class="bi bi-person"></i>
+                                                <span>Assigned to: 
+                                                    @foreach (var email in task.AssignedTo.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                                    {
+                                                        <span class="badge bg-info">@email.Trim()</span>
+                                                    }
+                                                </span>
+                                            </div>
+                                        }
                                     </div>
                                 </div>
                                 <div class="task-actions">
+                                    <button class="btn btn-edit-task" onclick="editTask(@task.Id)" title="Edit task">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
                                     <button class="btn btn-delete-task" onclick="deleteTask(@task.Id)">×</button>
                                 </div>
                             </div>
@@ -236,6 +256,42 @@
     </div>
 </div>
 
+<div class="modal fade" id="editTaskModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Task</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editTaskForm">
+                    <input type="hidden" id="editTaskId">
+                    <div class="mb-3">
+                        <label for="editTaskTitleInput" class="form-label">Title</label>
+                        <input type="text" class="form-control" id="editTaskTitleInput" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editTaskDescriptionInput" class="form-label">Description</label>
+                        <textarea class="form-control" id="editTaskDescriptionInput" rows="3" placeholder="Add a description..."></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editTaskDueDateInput" class="form-label">Due Date</label>
+                        <input type="date" class="form-control" id="editTaskDueDateInput">
+                    </div>
+                    <div class="mb-3">
+                        <label for="editTaskAssignedToInput" class="form-label">Assign to (comma-separated emails)</label>
+                        <input type="text" class="form-control" id="editTaskAssignedToInput" placeholder="email1@example.com, email2@example.com">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveTask()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @section Scripts {
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.min.js"></script>
     <script>
@@ -262,31 +318,127 @@
                 }
             }).catch(err => console.error(err.toString()));
 
-            connection.on("ReceiveTaskAdded", (taskId, title, description, dueDate) => {
-                if (currentListId > 0) {
+            connection.on("ReceiveTaskAdded", (listId, taskId, title, description, dueDate, assignedTo) => {
+                updateListTaskCount(listId, 1);
+                if (currentListId === listId) {
                     const existingTask = document.getElementById(`task-${taskId}`);
                     if (!existingTask) {
-                        addTaskToUI(taskId, title, description, dueDate, false);
+                        addTaskToUI(taskId, title, description, dueDate, assignedTo, false);
                     }
                 }
+            });
+
+            connection.on("ReceiveTaskUpdated", (taskId, title, description, dueDate, assignedTo, isCompleted) => {
+                updateTaskInUI(taskId, title, description, dueDate, assignedTo, isCompleted);
             });
 
             connection.on("ReceiveTaskToggled", (taskId, isCompleted) => {
                 updateTaskUI(taskId, isCompleted);
             });
 
-            connection.on("ReceiveTaskDeleted", (taskId) => {
-                removeTaskFromUI(taskId);
+            connection.on("ReceiveTaskDeleted", (listId, taskId) => {
+                if (currentListId === listId) {
+                    // Remove from UI and adjust count once
+                    removeTaskFromUI(taskId, listId, true);
+                } else {
+                    // Only adjust count for lists not currently open
+                    updateListTaskCount(listId, -1);
+                }
             });
 
-            connection.on("ReceiveListUpdated", (listId) => {
+            connection.on("ReceiveListUpdated", (listId, listName) => {
                 if (listId === currentListId) {
-                    loadList(listId);
+                    // Update list name in header
+                    const header = document.querySelector('.todo-main-header h2');
+                    if (header && listName) {
+                        header.textContent = listName;
+                    }
+                }
+                // Update list name in sidebar
+                const listItem = document.querySelector(`[data-list-id="${listId}"]`);
+                if (listItem && listName) {
+                    listItem.dataset.listName = listName;
+                    const nameElement = listItem.querySelector('.todo-list-item-name');
+                    if (nameElement) {
+                        nameElement.textContent = listName;
+                    }
                 }
             });
 
             connection.on("ReceiveListShared", (listId, listName, ownerEmail) => {
                 addListToSidebar(listId, listName, ownerEmail, true);
+            });
+
+            connection.on("ReceiveListSharingUpdated", (listId, sharedWith) => {
+                if (listId === currentListId) {
+                    updateSharedUsersDisplay(sharedWith);
+                }
+            });
+
+            connection.on("ReceiveListUnshared", (listId) => {
+                // Remove list from sidebar if user was unshared
+                const listItem = document.querySelector(`[data-list-id="${listId}"]`);
+                if (listItem) {
+                    listItem.remove();
+                }
+                
+                // If currently viewing this list, redirect to another list or show empty state
+                if (currentListId === listId) {
+                    const listsContainer = document.getElementById('listsContainer');
+                    const firstList = listsContainer.querySelector('.todo-list-item');
+                    if (firstList) {
+                        const firstListId = parseInt(firstList.dataset.listId);
+                        loadList(firstListId);
+                    } else {
+                        document.getElementById('listContent').innerHTML = `
+                            <div class="no-list-selected">
+                                <div class="no-list-selected-content">
+                                    <h3>Welcome to Todo App!</h3>
+                                    <p>Create your first list to get started.</p>
+                                </div>
+                            </div>
+                        `;
+                        currentListId = 0;
+                    }
+                }
+            });
+
+            connection.on("ReceiveListDeleted", (listId) => {
+                // Remove list from sidebar
+                const listItem = document.querySelector(`[data-list-id="${listId}"]`);
+                if (listItem) {
+                    listItem.remove();
+                }
+
+                // If the deleted list is currently displayed, redirect or show empty state
+                if (currentListId === listId) {
+                    const listsContainer = document.getElementById('listsContainer');
+                    const firstList = listsContainer.querySelector('.todo-list-item');
+                    if (firstList) {
+                        const firstListId = parseInt(firstList.dataset.listId);
+                        loadList(firstListId);
+                    } else {
+                        document.getElementById('listContent').innerHTML = `
+                            <div class="no-list-selected">
+                                <div class="no-list-selected-content">
+                                    <h3>Welcome to Todo App!</h3>
+                                    <p>Create your first list to get started.</p>
+                                </div>
+                            </div>
+                        `;
+                        currentListId = 0;
+                        if (connection) {
+                            connection.invoke("LeaveListGroup", listId);
+                        }
+                    }
+                }
+            });
+
+            connection.on("ReceiveListCreated", (listId, listName, ownerEmail) => {
+                if (ownerEmail === currentUserEmail) {
+                    addListToSidebar(listId, listName, ownerEmail, false, 0);
+                    showNotification(`List "${listName}" created successfully!`, 'success');
+                }
             });
         }
 
@@ -310,6 +462,7 @@
                     throw new Error('Failed to load list');
                 }
                 const list = await response.json();
+                setListTaskCount(listId, list.tasks ? list.tasks.length : 0);
 
                 const isOwner = list.ownerEmail === currentUserEmail;
                 document.getElementById('listContent').innerHTML = `
@@ -338,6 +491,10 @@
                                 <label for="taskDueDate" class="form-label-modern">Due Date</label>
                                 <input type="date" id="taskDueDate" class="form-control-modern">
                             </div>
+                            <div class="form-group-modern">
+                                <label for="taskAssignedTo" class="form-label-modern">Assign to (comma-separated emails)</label>
+                                <input type="text" id="taskAssignedTo" class="form-control-modern" placeholder="email1@example.com, email2@example.com">
+                            </div>
                         </div>
                     </div>
 
@@ -348,12 +505,12 @@
                             <input type="email" id="shareEmailInput" class="form-control" placeholder="Enter email address...">
                             <button class="btn btn-share" onclick="shareList(${list.id})">Share</button>
                         </div>
-                        ${list.sharedWith ? `
                         <div class="shared-users">
+                            ${list.sharedWith ? `
                             <strong>Shared with:</strong>
                             ${list.sharedWith.split(',').map(email => `<span class="shared-user-badge">${escapeHtml(email.trim())}</span>`).join('')}
+                            ` : ''}
                         </div>
-                        ` : ''}
                     </div>
                     ` : ''}
 
@@ -366,7 +523,7 @@
                                     const dueDateObj = new Date(task.dueDate);
                                     const now = new Date();
                                     const isOverdue = dueDateObj < now && !task.isCompleted;
-                                    const formattedDate = dueDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                                    const formattedDate = formatDate(task.dueDate);
                                     dueDateHtml = `
                                         <div class="task-due-date">
                                             <i class="bi bi-calendar"></i>
@@ -374,6 +531,18 @@
                                             ${isOverdue ? '<span class="badge bg-danger">Overdue</span>' : ''}
                                         </div>
                                     `;
+                                }
+                                let assignedToHtml = '';
+                                if (task.assignedTo) {
+                                    const emails = task.assignedTo.split(',').map(e => e.trim()).filter(e => e);
+                                    if (emails.length > 0) {
+                                        assignedToHtml = `
+                                            <div class="task-assigned-to">
+                                                <i class="bi bi-person"></i>
+                                                <span>Assigned to: ${emails.map(email => `<span class="badge bg-info">${escapeHtml(email)}</span>`).join(' ')}</span>
+                                            </div>
+                                        `;
+                                    }
                                 }
                                 return `
                                 <div class="task-card ${task.isCompleted ? 'completed' : ''}" id="task-${task.id}">
@@ -385,9 +554,13 @@
                                             <p class="task-title">${escapeHtml(task.title)}</p>
                                             ${descriptionHtml}
                                             ${dueDateHtml}
+                                            ${assignedToHtml}
                                         </div>
                                     </div>
                                     <div class="task-actions">
+                                        <button class="btn btn-edit-task" onclick="editTask(${task.id})" title="Edit task">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
                                         <button class="btn btn-delete-task" onclick="deleteTask(${task.id})">×</button>
                                     </div>
                                 </div>
@@ -417,12 +590,14 @@
             const input = document.getElementById('taskInput');
             const descriptionInput = document.getElementById('taskDescription');
             const dueDateInput = document.getElementById('taskDueDate');
+            const assignedToInput = document.getElementById('taskAssignedTo');
             const title = input.value.trim();
             if (!title || currentListId === 0) return;
 
             try {
                 const description = descriptionInput ? descriptionInput.value.trim() : '';
                 const dueDate = dueDateInput && dueDateInput.value ? dueDateInput.value : null;
+                const assignedTo = assignedToInput ? assignedToInput.value.trim() : '';
 
                 const token = getAntiForgeryToken();
                 const headers = token ? { 'RequestVerificationToken': token } : {};
@@ -434,6 +609,9 @@
                 if (dueDate) {
                     url += `&dueDate=${encodeURIComponent(dueDate)}`;
                 }
+                if (assignedTo) {
+                    url += `&assignedTo=${encodeURIComponent(assignedTo)}`;
+                }
                 
                 const response = await fetch(url, {
                     method: 'POST',
@@ -443,15 +621,13 @@
                 if (!response.ok) throw new Error('Failed to add task');
 
                 const data = await response.json();
-                addTaskToUI(data.id, data.title, data.description, data.dueDate, false);
-                
-                if (connection) {
-                    await connection.invoke("SendTaskAdded", currentListId, data.id, data.title, data.description || "", data.dueDate || "");
-                }
+                // Don't add locally - let SignalR handle it (controller already broadcasts)
+                // This prevents duplicate additions
 
                 input.value = '';
                 if (descriptionInput) descriptionInput.value = '';
                 if (dueDateInput) dueDateInput.value = '';
+                if (assignedToInput) assignedToInput.value = '';
                 const optionsDiv = document.getElementById('taskOptions');
                 if (optionsDiv && optionsDiv.style.display !== 'none') {
                     toggleTaskOptions();
@@ -478,7 +654,45 @@
             }
         }
 
-        function addTaskToUI(taskId, title, description, dueDate, isCompleted) {
+        // Helper function to generate task HTML fragments
+        function generateTaskHtmlFragments(title, description, dueDate, assignedTo, isCompleted) {
+            let descriptionHtml = '';
+            if (description) {
+                descriptionHtml = `<p class="task-description">${escapeHtml(description)}</p>`;
+            }
+            
+            let dueDateHtml = '';
+            if (dueDate) {
+                const dueDateObj = new Date(dueDate);
+                const now = new Date();
+                const isOverdue = dueDateObj < now && !isCompleted;
+                const formattedDate = formatDate(dueDate);
+                dueDateHtml = `
+                    <div class="task-due-date">
+                        <i class="bi bi-calendar"></i>
+                        <span>Due: ${formattedDate}</span>
+                        ${isOverdue ? '<span class="badge bg-danger">Overdue</span>' : ''}
+                    </div>
+                `;
+            }
+
+            let assignedToHtml = '';
+            if (assignedTo) {
+                const emails = assignedTo.split(',').map(e => e.trim()).filter(e => e);
+                if (emails.length > 0) {
+                    assignedToHtml = `
+                        <div class="task-assigned-to">
+                            <i class="bi bi-person"></i>
+                            <span>Assigned to: ${emails.map(email => `<span class="badge bg-info">${escapeHtml(email)}</span>`).join(' ')}</span>
+                        </div>
+                    `;
+                }
+            }
+
+            return { descriptionHtml, dueDateHtml, assignedToHtml };
+        }
+
+        function addTaskToUI(taskId, title, description, dueDate, assignedTo, isCompleted) {
             const container = document.getElementById('tasksContainer');
             
             const emptyState = container.querySelector('.empty-state');
@@ -490,25 +704,7 @@
             taskCard.className = `task-card ${isCompleted ? 'completed' : ''}`;
             taskCard.id = `task-${taskId}`;
             
-            let descriptionHtml = '';
-            if (description) {
-                descriptionHtml = `<p class="task-description">${escapeHtml(description)}</p>`;
-            }
-            
-            let dueDateHtml = '';
-            if (dueDate) {
-                const dueDateObj = new Date(dueDate);
-                const now = new Date();
-                const isOverdue = dueDateObj < now && !isCompleted;
-                const formattedDate = dueDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                dueDateHtml = `
-                    <div class="task-due-date">
-                        <i class="bi bi-calendar"></i>
-                        <span>Due: ${formattedDate}</span>
-                        ${isOverdue ? '<span class="badge bg-danger">Overdue</span>' : ''}
-                    </div>
-                `;
-            }
+            const { descriptionHtml, dueDateHtml, assignedToHtml } = generateTaskHtmlFragments(title, description, dueDate, assignedTo, isCompleted);
             
             taskCard.innerHTML = `
                 <div class="task-content">
@@ -519,13 +715,58 @@
                         <p class="task-title">${escapeHtml(title)}</p>
                         ${descriptionHtml}
                         ${dueDateHtml}
+                        ${assignedToHtml}
                     </div>
                 </div>
                 <div class="task-actions">
+                    <button class="btn btn-edit-task" onclick="editTask(${taskId})" title="Edit task">
+                        <i class="bi bi-pencil"></i>
+                    </button>
                     <button class="btn btn-delete-task" onclick="deleteTask(${taskId})">×</button>
                 </div>
             `;
             container.appendChild(taskCard);
+        }
+
+        function updateTaskInUI(taskId, title, description, dueDate, assignedTo, isCompleted) {
+            const taskCard = document.getElementById(`task-${taskId}`);
+            if (!taskCard) return;
+
+            // Update completion state
+            if (isCompleted) {
+                taskCard.classList.add('completed');
+            } else {
+                taskCard.classList.remove('completed');
+            }
+
+            // Update checkbox
+            const checkbox = taskCard.querySelector('.task-checkbox');
+            if (checkbox) checkbox.checked = isCompleted;
+
+            // Update content
+            const taskMainInfo = taskCard.querySelector('.task-main-info');
+            if (taskMainInfo) {
+                const { descriptionHtml, dueDateHtml, assignedToHtml } = generateTaskHtmlFragments(title, description, dueDate, assignedTo, isCompleted);
+
+                taskMainInfo.innerHTML = `
+                    <p class="task-title">${escapeHtml(title)}</p>
+                    ${descriptionHtml}
+                    ${dueDateHtml}
+                    ${assignedToHtml}
+                `;
+            }
+
+            // Update title styling
+            const titleElement = taskCard.querySelector('.task-title');
+            if (titleElement) {
+                if (isCompleted) {
+                    titleElement.style.textDecoration = 'line-through';
+                    titleElement.style.color = '#6c757d';
+                } else {
+                    titleElement.style.textDecoration = 'none';
+                    titleElement.style.color = '#2c3e50';
+                }
+            }
         }
 
         async function toggleTask(taskId) {
@@ -542,10 +783,7 @@
 
                 const data = await response.json();
                 updateTaskUI(taskId, data.isCompleted);
-
-                if (connection) {
-                    await connection.invoke("SendTaskToggled", currentListId, taskId, data.isCompleted);
-                }
+                // Controller already broadcasts via SignalR, no need to call here
             } catch (error) {
                 console.error('Error toggling task:', error);
                 alert('Failed to update task. Please try again.');
@@ -590,18 +828,14 @@
 
                 if (!response.ok) throw new Error('Failed to delete task');
 
-                removeTaskFromUI(taskId);
-
-                if (connection) {
-                    await connection.invoke("SendTaskDeleted", currentListId, taskId);
-                }
+                // UI update will arrive via SignalR broadcast
             } catch (error) {
                 console.error('Error deleting task:', error);
                 alert('Failed to delete task. Please try again.');
             }
         }
 
-        function removeTaskFromUI(taskId) {
+        function removeTaskFromUI(taskId, listId = null, adjustCount = false) {
             const taskCard = document.getElementById(`task-${taskId}`);
             if (taskCard) {
                 taskCard.remove();
@@ -616,6 +850,73 @@
                         <p>Add your first task above to get started!</p>
                     </div>
                 `;
+            }
+
+            if (adjustCount && listId !== null) {
+                updateListTaskCount(listId, -1);
+            }
+        }
+
+        async function editTask(taskId) {
+            try {
+                const response = await fetch(`/TodoLists/GetList?id=${currentListId}`);
+                if (!response.ok) throw new Error('Failed to load task');
+                
+                const list = await response.json();
+                const task = list.tasks.find(t => t.id === taskId);
+                
+                if (!task) {
+                    alert('Task not found');
+                    return;
+                }
+
+                document.getElementById('editTaskId').value = taskId;
+                document.getElementById('editTaskTitleInput').value = task.title;
+                document.getElementById('editTaskDescriptionInput').value = task.description || '';
+                document.getElementById('editTaskDueDateInput').value = task.dueDate || '';
+                document.getElementById('editTaskAssignedToInput').value = task.assignedTo || '';
+
+                new bootstrap.Modal(document.getElementById('editTaskModal')).show();
+            } catch (error) {
+                console.error('Error loading task:', error);
+                alert('Failed to load task. Please try again.');
+            }
+        }
+
+        async function saveTask() {
+            const taskId = parseInt(document.getElementById('editTaskId').value);
+            const title = document.getElementById('editTaskTitleInput').value.trim();
+            const description = document.getElementById('editTaskDescriptionInput').value.trim();
+            const dueDate = document.getElementById('editTaskDueDateInput').value;
+            const assignedTo = document.getElementById('editTaskAssignedToInput').value.trim();
+
+            if (!title) {
+                alert('Please enter a task title');
+                return;
+            }
+
+            try {
+                const token = getAntiForgeryToken();
+                const headers = token ? { 'RequestVerificationToken': token } : {};
+                
+                let url = `/TodoLists/UpdateTask?taskId=${taskId}&title=${encodeURIComponent(title)}`;
+                url += `&description=${description ? encodeURIComponent(description) : ''}`;
+                url += `&dueDate=${dueDate ? encodeURIComponent(dueDate) : ''}`;
+                url += `&assignedTo=${assignedTo ? encodeURIComponent(assignedTo) : ''}`;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: headers
+                });
+
+                if (!response.ok) throw new Error('Failed to update task');
+
+                const data = await response.json();
+                // SignalR will handle the UI update via ReceiveTaskUpdated
+                bootstrap.Modal.getInstance(document.getElementById('editTaskModal')).hide();
+            } catch (error) {
+                console.error('Error updating task:', error);
+                alert('Failed to update task. Please try again.');
             }
         }
 
@@ -642,13 +943,45 @@
 
                 const response = await fetch('/TodoLists/Create', {
                     method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
                     body: formData
                 });
 
-                if (response.ok || response.redirected) {
-                    bootstrap.Modal.getInstance(document.getElementById('createListModal')).hide();
-                    window.location.reload();
+                if (response.ok) {
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.includes("application/json")) {
+                        const data = await response.json();
+                        bootstrap.Modal.getInstance(document.getElementById('createListModal')).hide();
+                        document.getElementById('listNameInput').value = '';
+                        document.getElementById('sharedWithInput').value = '';
+                        
+                        // Add list to sidebar via SignalR (controller will broadcast)
+                        // If SignalR hasn't connected yet, add it directly
+                        if (connection && connection.state === signalR.HubConnectionState.Connected) {
+                            // Wait for SignalR broadcast
+                        } else {
+                            // Add directly if SignalR not ready
+                            addListToSidebar(data.id, data.name, currentUserEmail, false, 0);
+                            if (currentListId === 0) {
+                                loadList(data.id);
+                            }
+                        }
+                    } else {
+                        // If we get a redirect or HTML response, the list was still created
+                        // SignalR will handle the update, or we can reload
+                        bootstrap.Modal.getInstance(document.getElementById('createListModal')).hide();
+                        // Wait a bit for SignalR, then reload if needed
+                        setTimeout(() => {
+                            if (!document.querySelector(`[data-list-id]`)) {
+                                window.location.reload();
+                            }
+                        }, 500);
+                    }
                 } else {
+                    const errorText = await response.text();
+                    console.error('Server error:', errorText);
                     throw new Error('Failed to create list');
                 }
             } catch (error) {
@@ -699,7 +1032,26 @@
                 });
 
                 if (response.ok) {
-                    window.location.reload();
+                    bootstrap.Modal.getInstance(document.getElementById('editListModal')).hide();
+                    // Don't reload - SignalR will update the UI
+                    // Update sidebar list name if needed
+                    const listItem = document.querySelector(`[data-list-id="${id}"]`);
+                    if (listItem) {
+                        listItem.dataset.listName = name;
+                        listItem.dataset.listShared = sharedWith;
+                        const nameElement = listItem.querySelector('.todo-list-item-name');
+                        if (nameElement) {
+                            nameElement.textContent = name;
+                        }
+                    }
+                    // Update current list if it's the one being edited
+                    if (currentListId === parseInt(id)) {
+                        const header = document.querySelector('.todo-main-header h2');
+                        if (header) {
+                            header.textContent = name;
+                        }
+                        updateSharedUsersDisplay(sharedWith);
+                    }
                 } else {
                     throw new Error('Failed to update list');
                 }
@@ -727,7 +1079,8 @@
                 });
 
                 if (response.ok) {
-                    window.location.reload();
+                    // SignalR will handle UI update via ReceiveListDeleted
+                    // No need to reload page
                 } else {
                     throw new Error('Failed to delete list');
                 }
@@ -767,7 +1120,7 @@
 
                 if (response.ok) {
                     document.getElementById('shareEmailInput').value = '';
-                    loadList(listId);
+                    // Don't reload - SignalR will update the UI
                 } else {
                     throw new Error('Failed to share list');
                 }
@@ -788,12 +1141,60 @@
             return text ? text.replace(/[&<>"']/g, m => map[m]) : '';
         }
 
+        function formatDate(dateString) {
+            if (!dateString) return '';
+            const date = new Date(dateString);
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${day}-${month}-${year}`;
+        }
+
+        function updateSharedUsersDisplay(sharedWith) {
+            const sharedUsersDiv = document.querySelector('.shared-users');
+            if (!sharedUsersDiv) return;
+
+            if (!sharedWith || sharedWith.trim() === '') {
+                sharedUsersDiv.innerHTML = '';
+                return;
+            }
+
+            const emails = sharedWith.split(',').map(e => e.trim()).filter(e => e);
+            if (emails.length === 0) {
+                sharedUsersDiv.innerHTML = '';
+                return;
+            }
+
+            sharedUsersDiv.innerHTML = `
+                <strong>Shared with:</strong>
+                ${emails.map(email => `<span class="shared-user-badge">${escapeHtml(email)}</span>`).join('')}
+            `;
+        }
+
         function getAntiForgeryToken() {
             const token = document.querySelector('input[name="__RequestVerificationToken"]');
             return token ? token.value : '';
         }
 
-        function addListToSidebar(listId, listName, ownerEmail, isShared) {
+        function setListTaskCount(listId, count) {
+            const listItem = document.querySelector(`[data-list-id="${listId}"]`);
+            if (!listItem) return;
+            const clamped = Math.max(0, count);
+            listItem.dataset.listCount = clamped;
+            const countSpan = listItem.querySelector('.task-count');
+            if (countSpan) {
+                countSpan.textContent = `${clamped} tasks`;
+            }
+        }
+
+        function updateListTaskCount(listId, delta) {
+            const listItem = document.querySelector(`[data-list-id="${listId}"]`);
+            if (!listItem) return;
+            const current = parseInt(listItem.dataset.listCount || '0', 10);
+            setListTaskCount(listId, current + delta);
+        }
+
+        function addListToSidebar(listId, listName, ownerEmail, isShared, taskCount = 0) {
             const listsContainer = document.getElementById('listsContainer');
             
             const existingList = document.querySelector(`[data-list-id="${listId}"]`);
@@ -811,13 +1212,14 @@
             listItem.dataset.listId = listId;
             listItem.dataset.listName = listName;
             listItem.dataset.listShared = '';
+            listItem.dataset.listCount = taskCount;
             listItem.onclick = () => loadList(listId);
             
             const isOwner = ownerEmail === currentUserEmail;
             listItem.innerHTML = `
                 <div class="todo-list-item-name">${escapeHtml(listName)}</div>
                 <div class="todo-list-item-meta">
-                    <span>0 tasks</span>
+                    <span class="task-count">${taskCount} tasks</span>
                     ${isShared ? '<span class="badge bg-info">Shared</span>' : ''}
                 </div>
                 ${isOwner ? `
@@ -834,7 +1236,9 @@
 
             listsContainer.insertBefore(listItem, listsContainer.firstChild);
 
-            showNotification(`New list "${listName}" has been shared with you!`, 'info');
+            if (isShared) {
+                showNotification(`New list "${listName}" has been shared with you!`, 'info');
+            }
         }
 
         function showNotification(message, type = 'info') {

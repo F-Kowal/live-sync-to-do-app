@@ -14,9 +14,9 @@ namespace live_sync_to_do_app.Hubs
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, listId.ToString());
         }
 
-        public async Task SendTaskAdded(int listId, int taskId, string title, string description, string dueDate)
+        public async Task SendTaskAdded(int listId, int taskId, string title, string description, string dueDate, string assignedTo)
         {
-            await Clients.Group(listId.ToString()).SendAsync("ReceiveTaskAdded", taskId, title, description, dueDate);
+            await Clients.Group(listId.ToString()).SendAsync("ReceiveTaskAdded", taskId, title, description, dueDate, assignedTo);
         }
 
         public async Task SendTaskToggled(int listId, int taskId, bool isCompleted)
@@ -29,9 +29,9 @@ namespace live_sync_to_do_app.Hubs
             await Clients.Group(listId.ToString()).SendAsync("ReceiveTaskDeleted", taskId);
         }
 
-        public async Task SendListUpdated(int listId)
+        public async Task SendListUpdated(int listId, string listName)
         {
-            await Clients.Group(listId.ToString()).SendAsync("ReceiveListUpdated", listId);
+            await Clients.Group(listId.ToString()).SendAsync("ReceiveListUpdated", listId, listName);
         }
 
         public async Task JoinUserGroup(string userEmail)
@@ -42,6 +42,11 @@ namespace live_sync_to_do_app.Hubs
         public async Task SendListShared(string userEmail, int listId, string listName, string ownerEmail)
         {
             await Clients.Group($"user_{userEmail}").SendAsync("ReceiveListShared", listId, listName, ownerEmail);
+        }
+
+        public async Task SendListDeleted(int listId)
+        {
+            await Clients.Group(listId.ToString()).SendAsync("ReceiveListDeleted", listId);
         }
     }
 }

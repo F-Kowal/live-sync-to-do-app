@@ -16,6 +16,8 @@ namespace live_sync_to_do_app.Models
 
         public bool IsCompleted { get; set; }
 
+        public string? AssignedTo { get; set; }
+
         public int TodoListId { get; set; }
         public virtual TodoList TodoList { get; set; }
     }

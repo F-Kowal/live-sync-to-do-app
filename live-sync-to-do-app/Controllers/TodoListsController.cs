@@ -76,6 +76,7 @@ namespace live_sync_to_do_app.Controllers
         // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
+        [Authorize]
         public async Task<IActionResult> Create([Bind("Id,Name,SharedWith")] TodoList todoList)
         {
             todoList.OwnerEmail = User.Identity.Name;
@@ -89,6 +90,9 @@ namespace live_sync_to_do_app.Controllers
                 _context.Add(todoList);
                 await _context.SaveChangesAsync();
 
+                // Notify the owner via SignalR
+                await _hubContext.Clients.Group($"user_{todoList.OwnerEmail}").SendAsync("ReceiveListCreated", todoList.Id, todoList.Name, todoList.OwnerEmail);
+
                 // Notify shared users via SignalR
                 if (!string.IsNullOrEmpty(todoList.SharedWith))
                 {
@@ -97,6 +101,12 @@ namespace live_sync_to_do_app.Controllers
                     {
                         await _hubContext.Clients.Group($"user_{email}").SendAsync("ReceiveListShared", todoList.Id, todoList.Name, todoList.OwnerEmail);
                     }
+                }
+
+                // Return JSON for AJAX requests
+                if (Request.Headers["X-Requested-With"] == "XMLHttpRequest")
+                {
+                    return Json(new { id = todoList.Id, name = todoList.Name, ownerEmail = todoList.OwnerEmail });
                 }
 
                 return RedirectToAction(nameof(Index));
@@ -141,8 +151,18 @@ namespace live_sync_to_do_app.Controllers
                     var originalShared = originalList?.SharedWith ?? "";
                     var newShared = todoList.SharedWith ?? "";
 
+                    var originalName = originalList?.Name ?? todoList.Name;
                     _context.Update(todoList);
                     await _context.SaveChangesAsync();
+
+                    // Broadcast list name change if it changed
+                    if (originalName != todoList.Name)
+                    {
+                        await _hubContext.Clients.Group(id.ToString()).SendAsync("ReceiveListUpdated", id, todoList.Name);
+                    }
+
+                    // Broadcast sharing changes to all users viewing this list
+                    await _hubContext.Clients.Group(id.ToString()).SendAsync("ReceiveListSharingUpdated", id, todoList.SharedWith ?? "");
 
                     // Notify newly shared users
                     if (!string.IsNullOrEmpty(newShared))
@@ -159,6 +179,24 @@ namespace live_sync_to_do_app.Controllers
                             {
                                 // This is a newly shared user
                                 await _hubContext.Clients.Group($"user_{email}").SendAsync("ReceiveListShared", todoList.Id, todoList.Name, todoList.OwnerEmail);
+                            }
+                        }
+                    }
+
+                    // Notify users who were removed from sharing
+                    if (!string.IsNullOrEmpty(originalShared))
+                    {
+                        var originalEmails = new HashSet<string>(originalShared.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                        var newEmails = string.IsNullOrEmpty(newShared) 
+                            ? new HashSet<string>() 
+                            : new HashSet<string>(newShared.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                        
+                        foreach (var email in originalEmails)
+                        {
+                            if (!newEmails.Contains(email))
+                            {
+                                // This user was removed from sharing
+                                await _hubContext.Clients.Group($"user_{email}").SendAsync("ReceiveListUnshared", id);
                             }
                         }
                     }
@@ -205,10 +243,26 @@ namespace live_sync_to_do_app.Controllers
             var todoList = await _context.TodoLists.FindAsync(id);
             if (todoList != null)
             {
+                var listId = todoList.Id;
+                var sharedWith = todoList.SharedWith ?? "";
+                
                 _context.TodoLists.Remove(todoList);
+                await _context.SaveChangesAsync();
+
+                // Broadcast list deletion to all users who have access
+                await _hubContext.Clients.Group(listId.ToString()).SendAsync("ReceiveListDeleted", listId);
+                
+                // Also notify shared users via their user groups
+                if (!string.IsNullOrEmpty(sharedWith))
+                {
+                    var sharedEmails = sharedWith.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    foreach (var email in sharedEmails)
+                    {
+                        await _hubContext.Clients.Group($"user_{email}").SendAsync("ReceiveListDeleted", listId);
+                    }
+                }
             }
 
-            await _context.SaveChangesAsync();
             return RedirectToAction(nameof(Index));
         }
 
@@ -218,53 +272,161 @@ namespace live_sync_to_do_app.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> AddTask(int listId, string title, string? description = null, DateTime? dueDate = null)
+        [Authorize]
+        public async Task<IActionResult> AddTask(int listId, string title, string? description = null, DateTime? dueDate = null, string? assignedTo = null)
         {
+            // Verify user has access to the list
+            var currentUser = User.Identity.Name;
+            var todoList = await _context.TodoLists.FindAsync(listId);
+            if (todoList == null)
+            {
+                return NotFound();
+            }
+            if (todoList.OwnerEmail != currentUser && !(todoList.SharedWith ?? "").Contains(currentUser))
+            {
+                return Forbid();
+            }
+
             var task = new TodoTask 
             { 
                 TodoListId = listId, 
                 Title = title, 
                 Description = string.IsNullOrWhiteSpace(description) ? null : description,
                 DueDate = dueDate,
+                AssignedTo = string.IsNullOrWhiteSpace(assignedTo) ? null : assignedTo,
                 IsCompleted = false 
             };
             _context.TodoTasks.Add(task);
             await _context.SaveChangesAsync();
+
+            // Broadcast to all users in the list group
+            await _hubContext.Clients.Group(listId.ToString()).SendAsync("ReceiveTaskAdded", 
+                task.TodoListId, task.Id, task.Title, task.Description ?? "", task.DueDate?.ToString("yyyy-MM-dd") ?? "", task.AssignedTo ?? "");
 
             return Json(new 
             { 
                 id = task.Id, 
                 title = task.Title,
                 description = task.Description,
-                dueDate = task.DueDate?.ToString("yyyy-MM-dd")
+                dueDate = task.DueDate?.ToString("yyyy-MM-dd"),
+                assignedTo = task.AssignedTo
             });
         }
 
         [HttpPost]
+        [Authorize]
         public async Task<IActionResult> ToggleTask(int taskId)
         {
-            var task = await _context.TodoTasks.FindAsync(taskId);
+            var task = await _context.TodoTasks.Include(t => t.TodoList).FirstOrDefaultAsync(t => t.Id == taskId);
             if (task == null) return NotFound();
+
+            // Verify user has access to the list
+            var currentUser = User.Identity.Name;
+            var todoList = task.TodoList;
+            if (todoList.OwnerEmail != currentUser && !(todoList.SharedWith ?? "").Contains(currentUser))
+            {
+                return Forbid();
+            }
 
             task.IsCompleted = !task.IsCompleted;
             await _context.SaveChangesAsync();
+
+            // Broadcast to all users in the list group
+            await _hubContext.Clients.Group(task.TodoListId.ToString()).SendAsync("ReceiveTaskToggled", taskId, task.IsCompleted);
+
             return Json(new { id = task.Id, isCompleted = task.IsCompleted });
         }
 
         [HttpPost]
+        [Authorize]
         public async Task<IActionResult> DeleteTask(int taskId)
         {
-            var task = await _context.TodoTasks.FindAsync(taskId);
+            var task = await _context.TodoTasks.Include(t => t.TodoList).FirstOrDefaultAsync(t => t.Id == taskId);
             if (task == null) return NotFound();
+
+            // Verify user has access to the list
+            var currentUser = User.Identity.Name;
+            var todoList = task.TodoList;
+            if (todoList.OwnerEmail != currentUser && !(todoList.SharedWith ?? "").Contains(currentUser))
+            {
+                return Forbid();
+            }
 
             var listId = task.TodoListId;
             _context.TodoTasks.Remove(task);
             await _context.SaveChangesAsync();
 
+            // Broadcast to all users in the list group
+            await _hubContext.Clients.Group(listId.ToString()).SendAsync("ReceiveTaskDeleted", listId, taskId);
+
             return Json(new { listId = listId });
         }
 
+        [HttpPost]
+        [Authorize]
+        public async Task<IActionResult> UpdateTask(int taskId, string title, string? description = null, string? dueDate = null, string? assignedTo = null)
+        {
+            var task = await _context.TodoTasks.Include(t => t.TodoList).FirstOrDefaultAsync(t => t.Id == taskId);
+            if (task == null) return NotFound();
+
+            // Verify user has access to the list
+            var currentUser = User.Identity.Name;
+            var todoList = task.TodoList;
+            if (todoList.OwnerEmail != currentUser && !(todoList.SharedWith ?? "").Contains(currentUser))
+            {
+                return Forbid();
+            }
+
+            // Always update title if provided
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                task.Title = title;
+            }
+
+            // Handle description - null means don't change, empty string means clear
+            if (description != null)
+            {
+                task.Description = string.IsNullOrWhiteSpace(description) ? null : description;
+            }
+
+            // Handle due date - null means don't change, empty string means clear
+            if (dueDate != null)
+            {
+                if (string.IsNullOrWhiteSpace(dueDate))
+                {
+                    task.DueDate = null;
+                }
+                else if (DateTime.TryParse(dueDate, out var parsedDate))
+                {
+                    task.DueDate = parsedDate;
+                }
+            }
+
+            // Handle assigned to - null means don't change, empty string means clear
+            if (assignedTo != null)
+            {
+                task.AssignedTo = string.IsNullOrWhiteSpace(assignedTo) ? null : assignedTo;
+            }
+
+            await _context.SaveChangesAsync();
+
+            // Broadcast to all users in the list group
+            await _hubContext.Clients.Group(task.TodoListId.ToString()).SendAsync("ReceiveTaskUpdated", 
+                task.Id, task.Title, task.Description ?? "", task.DueDate?.ToString("yyyy-MM-dd") ?? "", task.AssignedTo ?? "", task.IsCompleted);
+
+            return Json(new 
+            { 
+                id = task.Id, 
+                title = task.Title,
+                description = task.Description,
+                dueDate = task.DueDate?.ToString("yyyy-MM-dd"),
+                assignedTo = task.AssignedTo,
+                isCompleted = task.IsCompleted
+            });
+        }
+
         [HttpGet]
+        [Authorize]
         public async Task<IActionResult> GetList(int id)
         {
             var todoList = await _context.TodoLists
@@ -294,7 +456,8 @@ namespace live_sync_to_do_app.Controllers
                     title = t.Title,
                     description = t.Description,
                     dueDate = t.DueDate?.ToString("yyyy-MM-dd"),
-                    isCompleted = t.IsCompleted
+                    isCompleted = t.IsCompleted,
+                    assignedTo = t.AssignedTo
                 }).ToList()
             });
         }
