@@ -7,7 +7,7 @@ A real-time collaborative todo list application built with ASP.NET Core, featuri
   <img src="images/screenshot1.png" width="700"/>
 </p>
 
-## 🚀 Features
+## Features
 
 - **Real-time Collaboration**: All changes sync instantly across all users sharing a list
 - **User Authentication**: Secure user accounts with ASP.NET Core Identity
@@ -23,7 +23,7 @@ A real-time collaborative todo list application built with ASP.NET Core, featuri
   - User assignments
   - List deletions
 
-## 🛠️ Technologies Used
+## Technologies Used
 
 - **Backend**:
   - ASP.NET Core 10.0 (MVC)
@@ -44,7 +44,7 @@ A real-time collaborative todo list application built with ASP.NET Core, featuri
   - SignalR Hubs for real-time messaging
 
 
-## 📖 How It Works
+## How It Works
 
 The app uses **ASP.NET Core SignalR** to enable real-time bidirectional communication between the server and clients:
 
@@ -55,7 +55,7 @@ The app uses **ASP.NET Core SignalR** to enable real-time bidirectional communic
 3. **Broadcasting**: When any user makes a change (add/edit/delete task, toggle completion, etc.), the server broadcasts the update to all users in the relevant group
 4. **Live Updates**: All connected clients receive the update instantly and update their UI without page refresh
 
-## 🖼️ Examples
+## Examples
 
 <p align="center">
   <img src="images/screenshot2.png" width="800"/>
